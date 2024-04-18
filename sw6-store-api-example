@@ -1,0 +1,110 @@
+require('dotenv').config();
+const axios = require('axios');
+const jsonfile = require('jsonfile');
+
+
+var testVariable = process.env.TEST_VARIABLE;
+var sw_access_key = process.env.SW_ACCESS_KEY;
+
+
+var shopwareApiInstance = axios.create({
+    //baseURL: 'https://'+process.env.SHOP_NAME+'.myshopify.com/admin/api/'+process.env.API_VERSION+'/', //products.json
+    baseURL: process.env.SHOP_URL,
+    timeout: 60000,
+    responseType: 'json', // default
+    validateStatus: false,
+    validateStatus: function (status) {
+        return status >= 200 && status <= 500; // default
+    },
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    params: {
+
+    }
+});
+
+
+async function swStoreApiGet(path, params) {
+    //TODO: config: merge configs
+    var response = await shopwareApiInstance.get('/store-api/'+path, {
+        headers: {
+            'sw-access-key': `${sw_access_key}`
+        },
+        params: params,
+    });
+
+    return response;
+}
+
+
+function wait(milliseconds) {
+    return new Promise(resolve => {
+        setTimeout(resolve, milliseconds);
+    });
+}
+
+
+async function saveEntityPart(entity, page, data){
+    jsonfile.writeFileSync(`data/${entity}/${page}.json`, data);
+}
+
+
+async function getEntityPart(entity, page){
+    var data = jsonfile.readFileSync(`data/${entity}/${page}.json`, {throws: false});
+    return data;
+}
+
+
+async function processProducts(page, limit){
+
+    var status = null;
+    if(page === 300) {console.log('the END'); return;}
+    var productData = await getEntityPart('products', page);
+    if(productData){
+        //console.log('STATUS: product store has part', page);
+        status = 100;
+    }
+    else {
+        await wait(3000);
+        var productResponse = await swStoreApiGet('product', {
+            page: page,
+            limit: limit,
+        });
+        status = productResponse.status;
+        productData = productResponse.data;
+        
+        if(status !== 200){
+            console.log('ERROR: status, page ', status, page); 
+            return; 
+        }
+        else {
+            await saveEntityPart('products', page, productData);
+        }
+    }
+    
+    var total = productData.total;
+
+    console.log('STATUS:', productData.page, productData.limit, productData.total, status);
+
+    if(total > 0 & total === limit){// and total === limit -> next page exists
+        await processProducts(page+1, limit);
+    }
+    else {
+        console.log('STATUS: reached the end of products');
+    }
+
+}
+
+
+(async () => {
+    //axios code: ECONNABORTED, AxiosError: timeout of 60000ms exceeded
+    //var productData = await getEntityPart('product', 1);console.log(productData);
+
+    var page = 1;
+    var limit = 100;
+
+    await processProducts(page, limit);
+
+    //console.log('test: ', testVariable);
+})()
